@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PNG → SVG Converter</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #0d0d10;
+      --surface:      #17171d;
+      --surface2:     #1e1e26;
+      --border:       #2c2c38;
+      --accent:       #7c6df9;
+      --accent-dim:   #5b50c7;
+      --accent-glow:  rgba(124,109,249,.18);
+      --text:         #e8e8f0;
+      --muted:        #7a7a90;
+      --success:      #4ade80;
+      --error:        #f87171;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 3rem 1rem 4rem;
+      line-height: 1.5;
+    }
+
+    /* ── Header ─────────────────────────────── */
+    header { text-align: center; margin-bottom: 2.8rem; }
+
+    .badge {
+      display: inline-block;
+      background: var(--accent-glow);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      padding: .25rem .75rem;
+      border-radius: 99px;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-size: clamp(1.8rem, 5vw, 2.6rem);
+      font-weight: 800;
+      background: linear-gradient(135deg, #a78bfa, #7c6df9 40%, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -.02em;
+    }
+
+    .subtitle {
+      margin-top: .6rem;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    /* ── Cards ──────────────────────────────── */
+    .card {
+      width: 100%;
+      max-width: 780px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 2rem;
+      margin-bottom: 1.4rem;
+    }
+
+    .card-title {
+      font-size: .8rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 1.1rem;
+    }
+
+    /* ── Drop zone ──────────────────────────── */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 2.8rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      user-select: none;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    .drop-zone .icon { color: var(--accent); margin-bottom: .9rem; display: block; }
+    .drop-zone .hint { color: var(--muted); font-size: .88rem; margin-top: .3rem; }
+    .drop-zone .cta  { color: var(--accent); font-weight: 600; }
+
+    /* ── Sliders ────────────────────────────── */
+    .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-top: 1.4rem; }
+    @media (max-width: 540px) { .settings { grid-template-columns: 1fr; } }
+
+    .setting label {
+      display: block;
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: .5rem;
+    }
+
+    .range-row { display: flex; align-items: center; gap: .75rem; }
+
+    input[type=range] {
+      flex: 1;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .val {
+      font-size: .85rem;
+      font-weight: 700;
+      min-width: 2.4rem;
+      text-align: right;
+      color: var(--accent);
+    }
+
+    /* ── Convert button ─────────────────────── */
+    .btn-convert {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .5rem;
+      width: 100%;
+      margin-top: 1.6rem;
+      padding: .9rem 1.5rem;
+      border-radius: 10px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .2s, transform .1s, box-shadow .2s;
+      box-shadow: 0 0 0 0 var(--accent-glow);
+    }
+    .btn-convert:hover:not(:disabled) {
+      background: var(--accent-dim);
+      box-shadow: 0 0 24px 4px var(--accent-glow);
+    }
+    .btn-convert:active:not(:disabled) { transform: scale(.97); }
+    .btn-convert:disabled {
+      background: var(--border);
+      color: var(--muted);
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* ── Previews ───────────────────────────── */
+    .preview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 540px) { .preview-grid { grid-template-columns: 1fr; } }
+
+    .preview-col .label {
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: .5rem;
+    }
+
+    .preview-box {
+      border-radius: 10px;
+      overflow: hidden;
+      background:
+        repeating-conic-gradient(#1e1e28 0% 25%, #25252f 0% 50%)
+        0 0 / 14px 14px;
+      min-height: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-box img {
+      max-width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .preview-box .empty-hint {
+      color: var(--muted);
+      font-size: .82rem;
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    /* ── Status ─────────────────────────────── */
+    .status {
+      margin-top: 1rem;
+      padding: .65rem 1rem;
+      border-radius: 8px;
+      font-size: .88rem;
+      font-weight: 500;
+      display: none;
+    }
+    .status.show { display: block; }
+    .status.info    { background: rgba(124,109,249,.12); color: var(--accent); }
+    .status.success { background: rgba(74,222,128,.12);  color: var(--success); }
+    .status.error   { background: rgba(248,113,113,.12); color: var(--error); }
+
+    /* ── Download ───────────────────────────── */
+    .download-wrap { margin-top: 1.2rem; display: none; justify-content: center; }
+    .download-wrap.show { display: flex; }
+
+    .btn-download {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .65rem 1.4rem;
+      border-radius: 8px;
+      background: var(--success);
+      color: #0a2010;
+      font-size: .9rem;
+      font-weight: 700;
+      text-decoration: none;
+      transition: background .2s, transform .1s;
+    }
+    .btn-download:hover  { background: #22c55e; }
+    .btn-download:active { transform: scale(.97); }
+
+    /* ── Code block ─────────────────────────── */
+    .code {
+      background: #0a0a0f;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem 1.3rem;
+      font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      font-size: .82rem;
+      overflow-x: auto;
+      line-height: 1.7;
+    }
+    .code .c  { color: #555; }
+    .code .k  { color: #a78bfa; }
+    .code .s  { color: #86efac; }
+
+    /* ── Steps ──────────────────────────────── */
+    .steps { list-style: none; display: flex; flex-direction: column; gap: .6rem; }
+    .steps li {
+      display: flex;
+      align-items: flex-start;
+      gap: .75rem;
+      font-size: .9rem;
+      color: var(--muted);
+    }
+    .steps li .n {
+      flex-shrink: 0;
+      width: 1.5rem;
+      height: 1.5rem;
+      border-radius: 50%;
+      background: var(--accent-glow);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-size: .75rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── Footer ─────────────────────────────── */
+    footer {
+      margin-top: 2.5rem;
+      color: var(--muted);
+      font-size: .78rem;
+      text-align: center;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    .hidden { display: none !important; }
+
+    /* ── Spinner ────────────────────────────── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="badge">Browser Tool</div>
+  <h1>PNG → SVG Converter</h1>
+  <p class="subtitle">Black &amp; white &nbsp;·&nbsp; transparent background &nbsp;·&nbsp; vector SVG output</p>
+</header>
+
+<!-- ── Upload card ───────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">Upload Image</div>
+
+  <div class="drop-zone" id="dropZone" role="button" tabindex="0"
+       aria-label="Upload PNG file">
+    <svg class="icon" width="42" height="42" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <p><span class="cta">Click to upload</span> or drag &amp; drop a PNG</p>
+    <p class="hint">Only PNG files are accepted</p>
+    <input type="file" id="fileInput" accept="image/png" style="display:none" aria-hidden="true"/>
+  </div>
+
+  <div class="settings">
+    <div class="setting">
+      <label for="threshold">B&amp;W Threshold</label>
+      <div class="range-row">
+        <input type="range" id="threshold" min="0" max="255" value="128" />
+        <span class="val" id="tVal">128</span>
+      </div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:.4rem">
+        Lower → more black detail
+      </div>
+    </div>
+    <div class="setting">
+      <label for="bgThresh">Background Removal</label>
+      <div class="range-row">
+        <input type="range" id="bgThresh" min="128" max="255" value="240" />
+        <span class="val" id="bgVal">240</span>
+      </div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:.4rem">
+        Lower → remove more near-white
+      </div>
+    </div>
+  </div>
+
+  <button class="btn-convert" id="convertBtn" disabled>
+    Convert to SVG
+  </button>
+</div>
+
+<!-- ── Preview card ──────────────────────────────────────────── -->
+<div class="card hidden" id="previewCard">
+  <div class="card-title">Preview</div>
+
+  <div class="preview-grid">
+    <div class="preview-col">
+      <div class="label">Original PNG</div>
+      <div class="preview-box"><img id="origImg" alt="Original" /></div>
+    </div>
+    <div class="preview-col">
+      <div class="label">SVG Output</div>
+      <div class="preview-box" id="svgBox">
+        <div class="empty-hint">Press Convert to generate SVG</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="statusMsg"></div>
+
+  <div class="download-wrap" id="dlWrap">
+    <a id="dlLink" download="converted.svg" class="btn-download">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      Download SVG
+    </a>
+  </div>
+</div>
+
+<!-- ── How it works ─────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">How it works</div>
+  <ul class="steps">
+    <li>
+      <span class="n">1</span>
+      <span>Image is converted to <strong>grayscale</strong>, then thresholded to pure black &amp; white.</span>
+    </li>
+    <li>
+      <span class="n">2</span>
+      <span>Pixels brighter than the background threshold are made <strong>fully transparent</strong>.</span>
+    </li>
+    <li>
+      <span class="n">3</span>
+      <span>Black pixel runs are encoded as <strong>SVG &lt;rect&gt; elements</strong> — scalable, no raster data.</span>
+    </li>
+  </ul>
+</div>
+
+<!-- ── Python CLI card ──────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">Python CLI — batch &amp; higher quality</div>
+  <p style="color:var(--muted);font-size:.88rem;margin-bottom:.9rem;">
+    The companion Python tool uses
+    <a href="https://potrace.sourceforge.net/" style="color:var(--accent)" target="_blank" rel="noopener">potrace</a>
+    when available for smooth, truly scalable vector paths.
+    Find it in the <code style="color:var(--accent)">png-to-svg/</code> folder of the repo.
+  </p>
+  <div class="code">
+<span class="c"># Install dependencies</span>
+<span class="k">pip install</span> <span class="s">-r requirements.txt</span>
+
+<span class="c"># Convert (output defaults to same filename with .svg)</span>
+<span class="k">python</span> converter.py photo.png
+
+<span class="c"># Custom thresholds &amp; explicit output path</span>
+<span class="k">python</span> converter.py photo.png output.svg <span class="s">--threshold 100 --bg-threshold 220</span>
+  </div>
+</div>
+
+<footer>
+  Part of <a href="https://github.com/spirosdio/undergo" target="_blank" rel="noopener">spirosdio/undergo</a>
+</footer>
+
+<!-- ── Hidden canvas for processing ─────────────────────────── -->
+<canvas id="canvas" style="display:none" aria-hidden="true"></canvas>
+
+<script>
+(function () {
+  "use strict";
+
+  const dropZone   = document.getElementById("dropZone");
+  const fileInput  = document.getElementById("fileInput");
+  const convertBtn = document.getElementById("convertBtn");
+  const previewCard= document.getElementById("previewCard");
+  const origImg    = document.getElementById("origImg");
+  const svgBox     = document.getElementById("svgBox");
+  const statusMsg  = document.getElementById("statusMsg");
+  const dlWrap     = document.getElementById("dlWrap");
+  const dlLink     = document.getElementById("dlLink");
+  const canvas     = document.getElementById("canvas");
+  const ctx        = canvas.getContext("2d", { willReadFrequently: true });
+
+  const thSlider   = document.getElementById("threshold");
+  const bgSlider   = document.getElementById("bgThresh");
+  const tVal       = document.getElementById("tVal");
+  const bgVal      = document.getElementById("bgVal");
+
+  thSlider.addEventListener("input", () => { tVal.textContent  = thSlider.value; });
+  bgSlider.addEventListener("input", () => { bgVal.textContent = bgSlider.value; });
+
+  let loadedImage = null;
+  let currentFilename = "converted";
+
+  // ── Drop zone ────────────────────────────────────────
+  dropZone.addEventListener("click",  () => fileInput.click());
+  dropZone.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
+
+  dropZone.addEventListener("dragover",  e => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+  dropZone.addEventListener("drop", e => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file && file.type === "image/png") {
+      loadFile(file);
+    } else {
+      showStatus("Please drop a PNG file.", "error");
+    }
+  });
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) loadFile(fileInput.files[0]);
+  });
+
+  function loadFile(file) {
+    currentFilename = file.name.replace(/\.png$/i, "");
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      loadedImage = img;
+      origImg.src = url;
+      previewCard.classList.remove("hidden");
+      convertBtn.disabled = false;
+      svgBox.innerHTML = '<div class="empty-hint">Press Convert to generate SVG</div>';
+      dlWrap.classList.remove("show");
+      hideStatus();
+    };
+    img.src = url;
+  }
+
+  // ── Convert ──────────────────────────────────────────
+  convertBtn.addEventListener("click", () => {
+    if (!loadedImage) return;
+
+    convertBtn.disabled = true;
+    convertBtn.innerHTML = '<div class="spinner"></div> Converting&hellip;';
+    showStatus("Processing image…", "info");
+
+    // Defer to next frame so the UI updates before heavy work
+    requestAnimationFrame(() => setTimeout(() => {
+      try {
+        const svg = processImage(loadedImage);
+        displaySVGPreview(svg);
+
+        const blob = new Blob([svg], { type: "image/svg+xml" });
+        dlLink.href = URL.createObjectURL(blob);
+        dlLink.download = currentFilename + ".svg";
+        dlWrap.classList.add("show");
+        showStatus("Conversion complete!", "success");
+      } catch (err) {
+        showStatus("Error: " + err.message, "error");
+        console.error(err);
+      } finally {
+        convertBtn.disabled = false;
+        convertBtn.innerHTML = "Convert to SVG";
+      }
+    }, 20));
+  });
+
+  // ── Core image processing ────────────────────────────
+  function processImage(img) {
+    const threshold = parseInt(thSlider.value, 10);
+    const bgThreshold = parseInt(bgSlider.value, 10);
+
+    canvas.width  = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // Step 1 — grayscale + BW threshold + remove white background
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      const bw   = gray < threshold ? 0 : 255;
+      if (bw >= bgThreshold) {
+        data[i] = data[i+1] = data[i+2] = 255;
+        data[i+3] = 0;       // transparent background
+      } else {
+        data[i] = data[i+1] = data[i+2] = bw;
+        data[i+3] = 255;     // opaque black pixel
+      }
+    }
+
+    // Step 2 — generate SVG with run-length encoded rects
+    return buildSVG(data, w, h);
+  }
+
+  function buildSVG(data, w, h) {
+    const parts = [];
+    parts.push(
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
+      '<g fill="black">'
+    );
+
+    for (let y = 0; y < h; y++) {
+      let x = 0;
+      while (x < w) {
+        const idx = (y * w + x) * 4;
+        if (data[idx + 3] > 128) {
+          const startX = x;
+          while (x < w && data[(y * w + x) * 4 + 3] > 128) x++;
+          parts.push(`<rect x="${startX}" y="${y}" width="${x - startX}" height="1"/>`);
+        } else {
+          x++;
+        }
+      }
+    }
+
+    parts.push("</g>", "</svg>");
+    return parts.join("\n");
+  }
+
+  // ── Preview ──────────────────────────────────────────
+  function displaySVGPreview(svgString) {
+    const blob = new Blob([svgString], { type: "image/svg+xml" });
+    const url  = URL.createObjectURL(blob);
+    const img  = new Image();
+    img.src = url;
+    img.alt = "SVG Preview";
+    img.style.cssText = "max-width:100%;max-height:280px;object-fit:contain;display:block;";
+    svgBox.innerHTML = "";
+    svgBox.appendChild(img);
+  }
+
+  // ── Status helpers ───────────────────────────────────
+  function showStatus(msg, type) {
+    statusMsg.textContent = msg;
+    statusMsg.className   = "status show " + type;
+  }
+  function hideStatus() {
+    statusMsg.className = "status";
+  }
+})();
+</script>
+</body>
+</html>
