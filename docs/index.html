@@ -108,8 +108,8 @@
     .drop-zone .cta  { color: var(--accent); font-weight: 600; }
 
     /* ── Sliders ────────────────────────────── */
-    .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-top: 1.4rem; }
-    @media (max-width: 540px) { .settings { grid-template-columns: 1fr; } }
+    .settings { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.2rem; margin-top: 1.4rem; }
+    @media (max-width: 600px) { .settings { grid-template-columns: 1fr; } }
 
     .setting label {
       display: block;
@@ -349,6 +349,21 @@
         Lower → remove more near-white
       </div>
     </div>
+    <div class="setting">
+      <label>Smoothing</label>
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.55rem">
+        <input type="checkbox" id="smoothEnabled" checked
+               style="accent-color:var(--accent);width:1rem;height:1rem;cursor:pointer" />
+        <span style="font-size:.82rem;color:var(--text);font-weight:500">Enable Bézier curves</span>
+      </div>
+      <div class="range-row">
+        <input type="range" id="smooth" min="0" max="50" value="20" />
+        <span class="val" id="smVal">20</span>
+      </div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:.4rem">
+        Higher → rounder corners
+      </div>
+    </div>
   </div>
 
   <button class="btn-convert" id="convertBtn" disabled>
@@ -453,11 +468,20 @@
 
   const thSlider   = document.getElementById("threshold");
   const bgSlider   = document.getElementById("bgThresh");
+  const smSlider   = document.getElementById("smooth");
+  const smCheck    = document.getElementById("smoothEnabled");
   const tVal       = document.getElementById("tVal");
   const bgVal      = document.getElementById("bgVal");
+  const smVal      = document.getElementById("smVal");
 
   thSlider.addEventListener("input", () => { tVal.textContent  = thSlider.value; });
   bgSlider.addEventListener("input", () => { bgVal.textContent = bgSlider.value; });
+  smSlider.addEventListener("input", () => { smVal.textContent = smSlider.value; });
+  smCheck.addEventListener("change", () => {
+    smSlider.disabled = !smCheck.checked;
+    smSlider.style.opacity = smCheck.checked ? "1" : "0.35";
+    smVal.style.opacity    = smCheck.checked ? "1" : "0.35";
+  });
 
   let loadedImage = null;
   let currentFilename = "converted";
@@ -530,8 +554,9 @@
 
   // ── Core image processing ────────────────────────────
   function processImage(img) {
-    const threshold = parseInt(thSlider.value, 10);
+    const threshold   = parseInt(thSlider.value, 10);
     const bgThreshold = parseInt(bgSlider.value, 10);
+    const smooth      = smCheck.checked ? parseInt(smSlider.value, 10) / 100 : 0; // 0..0.5
 
     canvas.width  = img.naturalWidth;
     canvas.height = img.naturalHeight;
@@ -564,34 +589,117 @@
       }
     }
 
-    // Step 2 — generate SVG with run-length encoded rects
-    return buildSVG(data, w, h);
+    // Step 2 — trace contours and generate smooth SVG paths
+    return buildSVGWithPaths(data, w, h, smooth);
   }
 
-  function buildSVG(data, w, h) {
-    const parts = [];
-    parts.push(
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
-      '<g fill="black">'
-    );
+  // ── Path tracing — contour-based SVG generation ──────
+  function buildSVGWithPaths(data, w, h, smooth) {
+    const px = (x, y) => x >= 0 && y >= 0 && x < w && y < h
+      && data[(y * w + x) * 4 + 3] > 128;
 
-    for (let y = 0; y < h; y++) {
-      let x = 0;
-      while (x < w) {
-        const idx = (y * w + x) * 4;
-        if (data[idx + 3] > 128) {
-          const startX = x;
-          while (x < w && data[(y * w + x) * 4 + 3] > 128) x++;
-          parts.push(`<rect x="${startX}" y="${y}" width="${x - startX}" height="1"/>`);
-        } else {
-          x++;
-        }
+    // Collect oriented boundary edges.
+    // Pixel corners sit at integer coords (0..w) × (0..h).
+    // Each edge is oriented so the opaque region is to the LEFT of travel.
+    const nextFrom = new Map();
+    const addEdge = (x0, y0, x1, y1) => {
+      const k = `${x0},${y0}`;
+      if (!nextFrom.has(k)) nextFrom.set(k, []);
+      nextFrom.get(k).push([x1, y1]);
+    };
+
+    // Horizontal boundary edges (between pixel row y-1 and row y)
+    for (let y = 0; y <= h; y++) {
+      for (let x = 0; x < w; x++) {
+        const above = px(x, y - 1), below = px(x, y);
+        if (below && !above) addEdge(x,   y, x+1, y); // travel →
+        if (above && !below) addEdge(x+1, y, x,   y); // travel ←
       }
     }
 
-    parts.push("</g>", "</svg>");
-    return parts.join("\n");
+    // Vertical boundary edges (between pixel col x-1 and col x)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x <= w; x++) {
+        const left = px(x-1, y), right = px(x, y);
+        if (right && !left) addEdge(x, y+1, x, y);   // travel ↑
+        if (left && !right) addEdge(x, y,   x, y+1); // travel ↓
+      }
+    }
+
+    // Chain edges into closed polygons
+    const polygons = [];
+    while (nextFrom.size > 0) {
+      const startKey = nextFrom.keys().next().value;
+      const [sx, sy] = startKey.split(',').map(Number);
+      const poly = [[sx, sy]];
+      let cx = sx, cy = sy;
+      for (;;) {
+        const k = `${cx},${cy}`;
+        const nexts = nextFrom.get(k);
+        if (!nexts || nexts.length === 0) break;
+        const [nx, ny] = nexts.pop();
+        if (nexts.length === 0) nextFrom.delete(k);
+        if (nx === sx && ny === sy) break;
+        poly.push([nx, ny]);
+        cx = nx; cy = ny;
+      }
+      if (poly.length >= 3) polygons.push(poly);
+    }
+
+    // Assemble SVG — evenodd fill handles nested boundaries (holes) correctly
+    const parts = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
+      '<g fill="black" fill-rule="evenodd">'
+    ];
+    for (const poly of polygons) {
+      const simplified = rdp(poly, 0.5);
+      parts.push(`<path d="${polyToPath(simplified, smooth)}"/>`);
+    }
+    parts.push('</g>', '</svg>');
+    return parts.join('\n');
+  }
+
+  // Ramer-Douglas-Peucker: collapse near-collinear points (straightens runs)
+  function rdp(pts, eps) {
+    if (pts.length <= 2) return pts;
+    const [x0, y0] = pts[0], [xn, yn] = pts[pts.length - 1];
+    const dx = xn - x0, dy = yn - y0, len = Math.hypot(dx, dy);
+    let maxD = 0, maxI = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [xi, yi] = pts[i];
+      const d = len > 0
+        ? Math.abs(dy * (xi - x0) - dx * (yi - y0)) / len
+        : Math.hypot(xi - x0, yi - y0);
+      if (d > maxD) { maxD = d; maxI = i; }
+    }
+    if (maxD > eps) {
+      return [...rdp(pts.slice(0, maxI + 1), eps).slice(0, -1),
+              ...rdp(pts.slice(maxI), eps)];
+    }
+    return [pts[0], pts[pts.length - 1]];
+  }
+
+  // Catmull-Rom spline → cubic Bezier path; tension ∈ [0, 0.5]
+  function polyToPath(pts, tension) {
+    const n = pts.length;
+    if (n < 2) return '';
+    if (tension < 0.01) {
+      return 'M' + pts.map(([x, y]) => `${x},${y}`).join('L') + 'Z';
+    }
+    let d = `M${pts[0][0]},${pts[0][1]}`;
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[(i - 1 + n) % n];
+      const p1 = pts[i];
+      const p2 = pts[(i + 1) % n];
+      const p3 = pts[(i + 2) % n];
+      const cp1x = (p1[0] + (p2[0] - p0[0]) * tension).toFixed(2);
+      const cp1y = (p1[1] + (p2[1] - p0[1]) * tension).toFixed(2);
+      const cp2x = (p2[0] - (p3[0] - p1[0]) * tension).toFixed(2);
+      const cp2y = (p2[1] - (p3[1] - p1[1]) * tension).toFixed(2);
+      d += ` C${cp1x},${cp1y} ${cp2x},${cp2y} ${p2[0]},${p2[1]}`;
+    }
+    return d + 'Z';
   }
 
   // ── Preview ──────────────────────────────────────────
