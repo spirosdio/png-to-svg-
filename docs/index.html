@@ -545,6 +545,13 @@
 
     // Step 1 — grayscale + BW threshold + remove white background
     for (let i = 0; i < data.length; i += 4) {
+      // Treat originally-transparent pixels as white background so they
+      // don't turn into black foreground after grayscale conversion.
+      if (data[i+3] < 128) {
+        data[i] = data[i+1] = data[i+2] = 255;
+        data[i+3] = 0;
+        continue;
+      }
       const r = data[i], g = data[i+1], b = data[i+2];
       const gray = 0.299 * r + 0.587 * g + 0.114 * b;
       const bw   = gray < threshold ? 0 : 255;

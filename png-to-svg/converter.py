@@ -40,6 +40,13 @@ except ImportError:
 
 def convert_to_bw(image: Image.Image, threshold: int = 128) -> Image.Image:
     """Grayscale → hard black-and-white split at *threshold* (0-255)."""
+    # Flatten any alpha channel onto a white background first so transparent
+    # pixels become white rather than turning black in grayscale conversion.
+    if image.mode in ("RGBA", "LA", "PA", "P"):
+        rgba = image.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        bg.alpha_composite(rgba)
+        image = bg.convert("RGB")
     gray = image.convert("L")
     return gray.point(lambda p: 0 if p < threshold else 255, "L")
 
